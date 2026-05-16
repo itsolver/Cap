@@ -76,16 +76,27 @@ function createServerEnv() {
 			CAP_VIDEOS_DEFAULT_PUBLIC: boolString(true).describe(
 				"Should videos be public or private by default",
 			),
+			CAP_SELF_HOST_DIRECT_VIDEO_PROCESSING: boolString(false).describe(
+				"Run video processing directly instead of queueing a workflow",
+			),
 			CAP_ALLOWED_SIGNUP_DOMAINS: z
 				.string()
 				.optional()
 				.describe("Comma-separated list of permitted signup domains"),
 
 			/// AI providers
+			CAP_TRANSCRIPTION_PROVIDER: z
+				.enum(["deepgram", "local-whisper"])
+				.optional(),
+			CAP_WHISPER_ASR_URL: z.string().optional(),
 			DEEPGRAM_API_KEY: z.string().optional().describe("Audio transcription"),
 			ANTHROPIC_API_KEY: z.string().optional().describe("AI chat"),
 			OPENAI_API_KEY: z.string().optional().describe("AI summaries"),
 			GROQ_API_KEY: z.string().optional().describe("AI summaries"),
+			CAP_AI_PROVIDER: z.enum(["groq", "openai", "ollama"]).optional(),
+			CAP_AI_TITLE_ONLY: boolString(false),
+			CAP_OLLAMA_URL: z.string().optional(),
+			CAP_OLLAMA_MODEL: z.string().optional(),
 			REPLICATE_API_TOKEN: z
 				.string()
 				.optional()

@@ -4,7 +4,11 @@ import { serverEnv } from "@cap/env";
 import type { Video } from "@cap/web-domain";
 import { eq } from "drizzle-orm";
 import { start } from "workflow/api";
-import { transcribeVideoWorkflow } from "@/workflows/transcribe";
+import { getTranscriptionProvider } from "@/lib/transcription-provider";
+import {
+	processTranscription,
+	transcribeVideoWorkflow,
+} from "@/workflows/transcribe";
 
 type TranscribeResult = {
 	success: boolean;
@@ -17,7 +21,7 @@ export async function transcribeVideo(
 	aiGenerationEnabled = false,
 	_isRetry = false,
 ): Promise<TranscribeResult> {
-	if (!serverEnv().DEEPGRAM_API_KEY) {
+	if (!getTranscriptionProvider()) {
 		return {
 			success: false,
 			message: "Missing necessary environment variables",
@@ -115,13 +119,22 @@ export async function transcribeVideo(
 			`[transcribeVideo] Triggering transcription workflow for video ${videoId}`,
 		);
 
-		await start(transcribeVideoWorkflow, [
-			{
-				videoId,
-				userId,
-				aiGenerationEnabled,
-			},
-		]);
+		const workflowPayload = {
+			videoId,
+			userId,
+			aiGenerationEnabled,
+		};
+
+		if (serverEnv().CAP_SELF_HOST_DIRECT_VIDEO_PROCESSING) {
+			startDirectTranscription(workflowPayload);
+
+			return {
+				success: true,
+				message: "Transcription workflow started",
+			};
+		}
+
+		await start(transcribeVideoWorkflow, [workflowPayload]);
 
 		return {
 			success: true,
@@ -140,4 +153,26 @@ export async function transcribeVideo(
 			message: "Failed to start transcription workflow",
 		};
 	}
+}
+
+function startDirectTranscription(
+	payload: Parameters<typeof processTranscription>[0],
+) {
+	queueMicrotask(() => {
+		processTranscription(payload).catch(async (error) => {
+			console.error("[transcribeVideo] Direct transcription failed:", error);
+
+			try {
+				await db()
+					.update(videos)
+					.set({ transcriptionStatus: "ERROR" })
+					.where(eq(videos.id, payload.videoId as Video.VideoId));
+			} catch (updateError) {
+				console.error(
+					"[transcribeVideo] Failed to mark direct transcription error:",
+					updateError,
+				);
+			}
+		});
+	});
 }

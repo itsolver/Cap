@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
 		const video = result[0];
 		const metadata: VideoMetadata = (video.metadata as VideoMetadata) || {};
 
-		if (metadata.summary || metadata.chapters) {
+		if (metadata.aiTitle || metadata.summary || metadata.chapters) {
 			console.log(
 				`[AI API] Returning existing AI metadata for video ${videoId}`,
 			);

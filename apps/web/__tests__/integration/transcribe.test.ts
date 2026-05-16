@@ -8,6 +8,7 @@ vi.mock("@cap/env", () => ({
 }));
 
 const mockStart = vi.hoisted(() => vi.fn());
+const mockProcessTranscription = vi.hoisted(() => vi.fn());
 const schemaMocks = vi.hoisted(() => ({
 	videos: { id: "id", settings: "settings" },
 	organizations: { id: "id", settings: "settings" },
@@ -20,6 +21,7 @@ vi.mock("workflow/api", () => ({
 }));
 
 vi.mock("@/workflows/transcribe", () => ({
+	processTranscription: mockProcessTranscription,
 	transcribeVideoWorkflow: vi.fn(),
 }));
 

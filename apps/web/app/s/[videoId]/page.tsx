@@ -40,6 +40,7 @@ import {
 	getDashboardData,
 	type OrganizationSettings,
 } from "@/app/(org)/dashboard/dashboard-data";
+import { startAiGeneration } from "@/lib/generate-ai";
 import { createNotification } from "@/lib/Notification";
 import * as EffectRuntime from "@/lib/server";
 import { runPromise } from "@/lib/server";
@@ -497,6 +498,23 @@ async function AuthorizedContent({
 
 	const currentMetadata = (video.metadata as VideoMetadata) || {};
 	const metadata = currentMetadata;
+
+	if (
+		aiGenerationEnabled &&
+		video.transcriptionStatus === "COMPLETE" &&
+		!metadata.aiGenerationStatus &&
+		!metadata.aiTitle &&
+		!metadata.summary
+	) {
+		console.log("[ShareVideoPage] Starting AI generation for video:", videoId);
+		startAiGeneration(videoId, video.owner.id).catch((error) => {
+			console.error(
+				`[ShareVideoPage] Error generating AI metadata for video ${videoId}:`,
+				error,
+			);
+		});
+	}
+
 	const aiGenerationStatus = metadata.aiGenerationStatus || null;
 
 	const initialAiData = {

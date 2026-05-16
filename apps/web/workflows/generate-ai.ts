@@ -7,11 +7,12 @@ import type { Video } from "@cap/web-domain";
 import { eq } from "drizzle-orm";
 import { Effect, Option } from "effect";
 import { FatalError } from "workflow";
+import { getAiProvider } from "@/lib/ai-provider";
 import { GROQ_MODEL, getGroqClient } from "@/lib/groq-client";
 import { runPromise } from "@/lib/server";
 import { decodeStorageVideo } from "@/lib/video-storage";
 
-interface GenerateAiWorkflowPayload {
+export interface GenerateAiWorkflowPayload {
 	videoId: string;
 	userId: string;
 }
@@ -42,6 +43,10 @@ const MAX_CHARS_PER_CHUNK = 24000;
 export async function generateAiWorkflow(payload: GenerateAiWorkflowPayload) {
 	"use workflow";
 
+	return processAiGeneration(payload);
+}
+
+export async function processAiGeneration(payload: GenerateAiWorkflowPayload) {
 	const { videoId, userId } = payload;
 
 	const videoData = await validateAndSetProcessing(videoId);
@@ -66,9 +71,8 @@ export async function generateAiWorkflow(payload: GenerateAiWorkflowPayload) {
 async function validateAndSetProcessing(videoId: string): Promise<VideoData> {
 	"use step";
 
-	const groqClient = getGroqClient();
-	if (!groqClient && !serverEnv().OPENAI_API_KEY) {
-		throw new FatalError("Missing Groq or OpenAI API key");
+	if (!getAiProvider()) {
+		throw new FatalError("Missing AI provider configuration");
 	}
 
 	const query = await db()
@@ -87,7 +91,7 @@ async function validateAndSetProcessing(videoId: string): Promise<VideoData> {
 		throw new FatalError("Transcription not complete");
 	}
 
-	if (metadata.summary && metadata.chapters) {
+	if (metadata.aiTitle || (metadata.summary && metadata.chapters)) {
 		throw new FatalError("AI metadata already generated");
 	}
 
@@ -158,7 +162,11 @@ async function markSkipped(
 async function generateWithAi(transcript: TranscriptData): Promise<AiResult> {
 	"use step";
 
-	const groqClient = getGroqClient();
+	if (serverEnv().CAP_AI_TITLE_ONLY) {
+		return generateTitleOnly(transcript);
+	}
+
+	const groqClient = getAiProvider() === "groq" ? getGroqClient() : null;
 	const chunks = chunkTranscriptWithTimestamps(transcript.segments);
 
 	const videoDuration = getVideoDuration(transcript.segments);
@@ -236,10 +244,13 @@ async function saveResults(
 		video.name || "",
 	);
 
-	if (
-		(video.name?.startsWith("Cap Recording -") || hasDatePattern) &&
-		result.title
-	) {
+	const hasGeneratedName =
+		video.name?.startsWith("Cap Recording -") ||
+		video.name?.startsWith("Cap Upload -") ||
+		video.name?.startsWith("Screen Recording") ||
+		hasDatePattern;
+
+	if (hasGeneratedName && result.title) {
 		await db()
 			.update(videos)
 			.set({ name: result.title })
@@ -313,7 +324,14 @@ function chunkTranscriptWithTimestamps(
 async function callAiApi(
 	prompt: string,
 	groqClient: ReturnType<typeof getGroqClient>,
+	numPredict?: number,
 ): Promise<string> {
+	const provider = getAiProvider();
+
+	if (provider === "ollama") {
+		return callOllama(prompt, numPredict);
+	}
+
 	if (groqClient) {
 		try {
 			const completion = await groqClient.chat.completions.create({
@@ -327,9 +345,46 @@ async function callAiApi(
 			}
 			throw groqError;
 		}
-	} else if (serverEnv().OPENAI_API_KEY) {
+	} else if (provider === "openai" && serverEnv().OPENAI_API_KEY) {
 		return callOpenAi(prompt);
 	}
+	return "{}";
+}
+
+async function callOllama(prompt: string, numPredict = 1024): Promise<string> {
+	const endpoint = new URL(
+		"/api/generate",
+		(serverEnv().CAP_OLLAMA_URL as string).replace(/\/$/, ""),
+	);
+	const response = await fetch(endpoint, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			model: serverEnv().CAP_OLLAMA_MODEL || "qwen2.5:1.5b",
+			prompt,
+			stream: false,
+			options: {
+				temperature: 0.2,
+				num_predict: numPredict,
+			},
+		}),
+	});
+
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(`Ollama API error: ${response.status} ${errorText}`);
+	}
+
+	const data: unknown = await response.json();
+	if (
+		typeof data === "object" &&
+		data !== null &&
+		"response" in data &&
+		typeof data.response === "string"
+	) {
+		return data.response;
+	}
+
 	return "{}";
 }
 
@@ -361,6 +416,60 @@ function cleanJsonResponse(content: string): string {
 		return content.replace(/```\s*/g, "");
 	}
 	return content;
+}
+
+async function generateTitleOnly(
+	transcript: TranscriptData,
+): Promise<AiResult> {
+	const excerpt = transcript.text.slice(0, 6000);
+	const prompt = `Create a concise, specific title for this customer-facing screen recording.
+
+Rules:
+- Return only valid JSON: {"title":"..."}
+- Use 4 to 10 words
+- No quotes outside the JSON
+- No generic words like "recording", "video", "demo", or "screen share" unless needed
+- Make it useful for someone scanning a list of customer support recordings
+
+Transcript:
+${excerpt}`;
+
+	const groqClient = getAiProvider() === "groq" ? getGroqClient() : null;
+	const content = await callAiApi(prompt, groqClient, 80);
+	return { title: cleanGeneratedTitle(content) };
+}
+
+function cleanGeneratedTitle(content: string): string {
+	const cleaned = cleanJsonResponse(content).trim();
+
+	try {
+		const parsed: unknown = JSON.parse(cleaned);
+		if (
+			typeof parsed === "object" &&
+			parsed !== null &&
+			"title" in parsed &&
+			typeof parsed.title === "string"
+		) {
+			return sanitizeGeneratedTitle(parsed.title);
+		}
+	} catch {}
+
+	const [firstLine] = cleaned.split(/\r?\n/);
+	return sanitizeGeneratedTitle(firstLine ?? "");
+}
+
+function sanitizeGeneratedTitle(title: string): string {
+	const normalized = title
+		.replace(/^["']|["']$/g, "")
+		.replace(/\s+/g, " ")
+		.trim()
+		.replace(/\.$/, "");
+
+	if (normalized.length < 3) {
+		return "Untitled Recording";
+	}
+
+	return normalized.length > 80 ? normalized.slice(0, 80).trim() : normalized;
 }
 
 async function generateSingleChunk(

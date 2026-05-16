@@ -5,7 +5,11 @@ import { serverEnv } from "@cap/env";
 import type { Video } from "@cap/web-domain";
 import { eq } from "drizzle-orm";
 import { start } from "workflow/api";
-import { generateAiWorkflow } from "@/workflows/generate-ai";
+import { getAiProvider } from "@/lib/ai-provider";
+import {
+	generateAiWorkflow,
+	processAiGeneration,
+} from "@/workflows/generate-ai";
 
 type GenerateAiResult = {
 	success: boolean;
@@ -16,10 +20,10 @@ export async function startAiGeneration(
 	videoId: Video.VideoId,
 	userId: string,
 ): Promise<GenerateAiResult> {
-	if (!serverEnv().GROQ_API_KEY && !serverEnv().OPENAI_API_KEY) {
+	if (!getAiProvider()) {
 		return {
 			success: false,
-			message: "Missing AI API keys (Groq or OpenAI)",
+			message: "Missing AI provider configuration",
 		};
 	}
 
@@ -62,8 +66,7 @@ export async function startAiGeneration(
 
 	if (
 		metadata.aiGenerationStatus === "COMPLETE" &&
-		metadata.summary &&
-		metadata.chapters
+		(metadata.aiTitle || (metadata.summary && metadata.chapters))
 	) {
 		return {
 			success: true,
@@ -82,7 +85,13 @@ export async function startAiGeneration(
 			})
 			.where(eq(videos.id, videoId));
 
-		await start(generateAiWorkflow, [{ videoId, userId }]);
+		const workflowPayload = { videoId, userId };
+
+		if (serverEnv().CAP_SELF_HOST_DIRECT_VIDEO_PROCESSING) {
+			startDirectAiGeneration(workflowPayload);
+		} else {
+			await start(generateAiWorkflow, [workflowPayload]);
+		}
 
 		return {
 			success: true,
@@ -104,4 +113,38 @@ export async function startAiGeneration(
 			message: "Failed to start AI generation workflow",
 		};
 	}
+}
+
+function startDirectAiGeneration(
+	payload: Parameters<typeof processAiGeneration>[0],
+) {
+	queueMicrotask(() => {
+		processAiGeneration(payload).catch(async (error) => {
+			console.error("[startAiGeneration] Direct AI generation failed:", error);
+
+			try {
+				const [video] = await db()
+					.select({ metadata: videos.metadata })
+					.from(videos)
+					.where(eq(videos.id, payload.videoId as Video.VideoId))
+					.limit(1);
+
+				const metadata = (video?.metadata as VideoMetadata) || {};
+				await db()
+					.update(videos)
+					.set({
+						metadata: {
+							...metadata,
+							aiGenerationStatus: "ERROR",
+						},
+					})
+					.where(eq(videos.id, payload.videoId as Video.VideoId));
+			} catch (updateError) {
+				console.error(
+					"[startAiGeneration] Failed to mark direct AI error:",
+					updateError,
+				);
+			}
+		});
+	});
 }

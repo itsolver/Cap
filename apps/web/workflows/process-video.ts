@@ -35,6 +35,12 @@ export async function processVideoWorkflow(
 ): Promise<VideoProcessingResult> {
 	"use workflow";
 
+	return processVideo(payload);
+}
+
+export async function processVideo(
+	payload: ProcessVideoWorkflowPayload,
+): Promise<VideoProcessingResult> {
 	const { videoId, userId, rawFileKey, bucketId } = payload;
 
 	try {

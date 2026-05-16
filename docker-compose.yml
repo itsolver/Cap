@@ -3,33 +3,51 @@ name: cap
 services:
   cap-web:
     container_name: cap-web
-    image: ghcr.io/capsoftware/cap-web:latest
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    image: cap-web-local
     restart: unless-stopped
     depends_on:
       mysql:
         condition: service_healthy
       minio:
         condition: service_healthy
+      whisper:
+        condition: service_started
+      ollama-setup:
+        condition: service_completed_successfully
     environment:
-      DATABASE_URL: mysql://cap:${MYSQL_PASSWORD:-cap-local-pwd-123}@mysql:3306/cap
-      WEB_URL: ${CAP_URL:-http://localhost:3000}
-      NEXTAUTH_URL: ${CAP_URL:-http://localhost:3000}
-      DATABASE_ENCRYPTION_KEY: ${DATABASE_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
-      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789}
-      MEDIA_SERVER_WEBHOOK_SECRET: ${MEDIA_SERVER_WEBHOOK_SECRET:-fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210}
+      DATABASE_URL: mysql://cap:${MYSQL_PASSWORD:?Set MYSQL_PASSWORD}@mysql:3306/cap
+      WEB_URL: ${CAP_URL:-https://cap.itsolver.au}
+      NEXTAUTH_URL: ${CAP_URL:-https://cap.itsolver.au}
+      DATABASE_ENCRYPTION_KEY: ${DATABASE_ENCRYPTION_KEY:?Set DATABASE_ENCRYPTION_KEY}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET}
+      MEDIA_SERVER_WEBHOOK_SECRET: ${MEDIA_SERVER_WEBHOOK_SECRET:?Set MEDIA_SERVER_WEBHOOK_SECRET}
       CAP_AWS_ACCESS_KEY: ${MINIO_ROOT_USER:-cap-admin}
-      CAP_AWS_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-cap-minio-pwd-456}
-      CAP_AWS_BUCKET: cap
+      CAP_AWS_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
+      CAP_AWS_BUCKET: ${S3_BUCKET:-cap}
       CAP_AWS_REGION: us-east-1
-      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_URL:-http://localhost:9000}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_URL:-https://cap-assets.itsolver.au}
       S3_INTERNAL_ENDPOINT: http://minio:9000
       S3_PATH_STYLE: "true"
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM_DOMAIN: ${RESEND_FROM_DOMAIN:-}
+      CAP_TRANSCRIPTION_PROVIDER: ${CAP_TRANSCRIPTION_PROVIDER:-local-whisper}
+      CAP_WHISPER_ASR_URL: ${CAP_WHISPER_ASR_URL:-http://whisper:9000}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      CAP_AI_PROVIDER: ${CAP_AI_PROVIDER:-ollama}
+      CAP_AI_TITLE_ONLY: ${CAP_AI_TITLE_ONLY:-true}
+      CAP_OLLAMA_URL: ${CAP_OLLAMA_URL:-http://ollama:11434}
+      CAP_OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:1.5b}
+      CAP_ALLOWED_SIGNUP_DOMAINS: ${CAP_ALLOWED_SIGNUP_DOMAINS:-itsolver.net}
+      CAP_VIDEOS_DEFAULT_PUBLIC: ${CAP_VIDEOS_DEFAULT_PUBLIC:-true}
+      CAP_SELF_HOST_DIRECT_VIDEO_PROCESSING: ${CAP_SELF_HOST_DIRECT_VIDEO_PROCESSING:-true}
       MEDIA_SERVER_URL: http://media-server:3456
       MEDIA_SERVER_WEBHOOK_URL: http://cap-web:3000
+      NODE_ENV: production
     ports:
-      - "${CAP_PORT:-3000}:3000"
+      - "${CAP_BIND_ADDRESS:-127.0.0.1}:${CAP_PORT:-3000}:3000"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/"]
       interval: 30s
@@ -47,13 +65,52 @@ services:
     restart: unless-stopped
     environment:
       PORT: 3456
-      MEDIA_SERVER_WEBHOOK_SECRET: ${MEDIA_SERVER_WEBHOOK_SECRET:-fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210}
+      MEDIA_SERVER_WEBHOOK_SECRET: ${MEDIA_SERVER_WEBHOOK_SECRET:?Set MEDIA_SERVER_WEBHOOK_SECRET}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3456/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+    networks:
+      - cap-network
+
+  whisper:
+    container_name: cap-whisper
+    image: onerahmet/openai-whisper-asr-webservice:latest
+    restart: unless-stopped
+    environment:
+      ASR_ENGINE: ${WHISPER_ENGINE:-faster_whisper}
+      ASR_MODEL: ${WHISPER_MODEL:-base}
+      ASR_DEVICE: ${WHISPER_DEVICE:-cpu}
+    volumes:
+      - cap-whisper-cache:/root/.cache
+    networks:
+      - cap-network
+
+  ollama:
+    container_name: cap-ollama
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - cap-ollama-data:/root/.ollama
+    networks:
+      - cap-network
+
+  ollama-setup:
+    container_name: cap-ollama-setup
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_started
+    entrypoint: >
+      /bin/sh -c "
+      until ollama list >/dev/null 2>&1; do sleep 2; done;
+      ollama pull $${OLLAMA_MODEL:-qwen2.5:1.5b};
+      "
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:1.5b}
     networks:
       - cap-network
 
@@ -64,8 +121,8 @@ services:
     environment:
       MYSQL_DATABASE: cap
       MYSQL_USER: cap
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-cap-local-pwd-123}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-cap-root-pwd-789}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD}
     command:
       - --max_connections=1000
       - --default-authentication-plugin=mysql_native_password
@@ -74,7 +131,7 @@ services:
     volumes:
       - cap-mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "cap", "-p${MYSQL_PASSWORD:-cap-local-pwd-123}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "cap", "-p${MYSQL_PASSWORD:?Set MYSQL_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -89,10 +146,11 @@ services:
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-cap-admin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-cap-minio-pwd-456}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
+      MINIO_API_CORS_ALLOW_ORIGIN: ${CAP_URL:-https://cap.itsolver.au}
     ports:
-      - "${MINIO_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${MINIO_BIND_ADDRESS:-127.0.0.1}:${MINIO_PORT:-9000}:9000"
+      - "${MINIO_BIND_ADDRESS:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - cap-minio-data:/data
     healthcheck:
@@ -112,20 +170,63 @@ services:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      mc alias set capminio http://minio:9000 $${MINIO_ROOT_USER:-cap-admin} $${MINIO_ROOT_PASSWORD:-cap-minio-pwd-456};
-      mc mb capminio/cap --ignore-existing;
-      mc anonymous set download capminio/cap;
+      mc alias set capminio http://minio:9000 $${MINIO_ROOT_USER:-cap-admin} $${MINIO_ROOT_PASSWORD};
+      mc mb capminio/$${S3_BUCKET:-cap} --ignore-existing;
+      mc anonymous set download capminio/$${S3_BUCKET:-cap};
       exit 0;
       "
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-cap-admin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-cap-minio-pwd-456}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
+      S3_BUCKET: ${S3_BUCKET:-cap}
+    networks:
+      - cap-network
+
+  cloudflared:
+    container_name: cap-cloudflared
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARED_TUNNEL_TOKEN:?Set CLOUDFLARED_TUNNEL_TOKEN}
+    depends_on:
+      cap-web:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - cap-network
+
+  lan-proxy:
+    container_name: cap-lan-proxy
+    build:
+      context: ./infra/lan-proxy
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    profiles:
+      - lan
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:-admin@itsolver.au}
+      CLOUDFLARE_DNS_API_TOKEN: ${CLOUDFLARE_DNS_API_TOKEN:-}
+    ports:
+      - "${LOCAL_PROXY_BIND_ADDRESS:-0.0.0.0}:${LOCAL_PROXY_HTTP_PORT:-80}:80"
+      - "${LOCAL_PROXY_BIND_ADDRESS:-0.0.0.0}:${LOCAL_PROXY_HTTPS_PORT:-443}:443"
+    volumes:
+      - cap-caddy-data:/data
+      - cap-caddy-config:/config
+    depends_on:
+      cap-web:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     networks:
       - cap-network
 
 volumes:
   cap-mysql-data:
   cap-minio-data:
+  cap-whisper-cache:
+  cap-ollama-data:
+  cap-caddy-data:
+  cap-caddy-config:
 
 networks:
   cap-network:

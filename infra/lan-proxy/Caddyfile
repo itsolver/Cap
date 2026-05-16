@@ -1,0 +1,21 @@
+{
+	email {$ACME_EMAIL}
+}
+
+cap.itsolver.au {
+	encode zstd gzip
+	tls {
+		dns cloudflare {$CLOUDFLARE_DNS_API_TOKEN}
+		propagation_timeout 45m
+	}
+	reverse_proxy cap-web:3000
+}
+
+cap-assets.itsolver.au {
+	encode zstd gzip
+	tls {
+		dns cloudflare {$CLOUDFLARE_DNS_API_TOKEN}
+		propagation_timeout 45m
+	}
+	reverse_proxy minio:9000
+}

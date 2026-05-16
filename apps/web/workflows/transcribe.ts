@@ -29,9 +29,10 @@ import {
 } from "@/lib/media-client";
 import { runPromise } from "@/lib/server";
 import { type DeepgramResult, formatToWebVTT } from "@/lib/transcribe-utils";
+import { getTranscriptionProvider } from "@/lib/transcription-provider";
 import { decodeStorageVideo } from "@/lib/video-storage";
 
-interface TranscribeWorkflowPayload {
+export interface TranscribeWorkflowPayload {
 	videoId: string;
 	userId: string;
 	aiGenerationEnabled: boolean;
@@ -48,6 +49,10 @@ export async function transcribeVideoWorkflow(
 ) {
 	"use workflow";
 
+	return processTranscription(payload);
+}
+
+export async function processTranscription(payload: TranscribeWorkflowPayload) {
 	const { videoId, userId, aiGenerationEnabled } = payload;
 
 	const videoData = await validateVideo(videoId);
@@ -67,7 +72,7 @@ export async function transcribeVideoWorkflow(
 		};
 	}
 
-	const [transcription] = await Promise.all([transcribeWithDeepgram(audioUrl)]);
+	const [transcription] = await Promise.all([transcribeAudio(audioUrl)]);
 
 	await saveTranscription(videoId, userId, videoData.video, transcription);
 
@@ -83,8 +88,8 @@ export async function transcribeVideoWorkflow(
 async function validateVideo(videoId: string): Promise<VideoData> {
 	"use step";
 
-	if (!serverEnv().DEEPGRAM_API_KEY) {
-		throw new FatalError("Missing DEEPGRAM_API_KEY");
+	if (!getTranscriptionProvider()) {
+		throw new FatalError("Missing transcription provider configuration");
 	}
 
 	const query = await db()
@@ -304,6 +309,62 @@ async function transcribeWithDeepgram(audioUrl: string): Promise<string> {
 	}
 
 	return formatToWebVTT(result as unknown as DeepgramResult);
+}
+
+async function transcribeWithLocalWhisper(audioUrl: string): Promise<string> {
+	"use step";
+
+	const audioResponse = await fetch(audioUrl);
+	if (!audioResponse.ok) {
+		throw new Error(
+			`Audio URL not accessible: ${audioResponse.status} ${audioResponse.statusText}`,
+		);
+	}
+
+	const audioBytes = new Uint8Array(await audioResponse.arrayBuffer());
+	const formData = new FormData();
+	formData.append(
+		"audio_file",
+		new Blob([audioBytes], { type: "audio/mpeg" }),
+		"audio.mp3",
+	);
+
+	const endpoint = new URL(
+		"/asr",
+		(serverEnv().CAP_WHISPER_ASR_URL as string).replace(/\/$/, ""),
+	);
+	endpoint.searchParams.set("output", "vtt");
+	endpoint.searchParams.set("task", "transcribe");
+	endpoint.searchParams.set("encode", "true");
+
+	const response = await fetch(endpoint, {
+		method: "POST",
+		body: formData,
+	});
+
+	if (!response.ok) {
+		const responseText = await response.text();
+		throw new Error(
+			`Local Whisper transcription failed: ${response.status} ${response.statusText} ${responseText}`,
+		);
+	}
+
+	const text = await response.text();
+	return text.startsWith("WEBVTT") ? text : `WEBVTT\n\n${text}`;
+}
+
+async function transcribeAudio(audioUrl: string): Promise<string> {
+	const provider = getTranscriptionProvider();
+
+	if (provider === "local-whisper") {
+		return transcribeWithLocalWhisper(audioUrl);
+	}
+
+	if (provider === "deepgram") {
+		return transcribeWithDeepgram(audioUrl);
+	}
+
+	throw new FatalError("Missing transcription provider configuration");
 }
 
 async function saveTranscription(

@@ -1,9 +1,10 @@
 import { db } from "@cap/database";
 import { videoUploads } from "@cap/database/schema";
+import { serverEnv } from "@cap/env";
 import type { S3Bucket, Video } from "@cap/web-domain";
 import { and, eq, ne } from "drizzle-orm";
 import { start } from "workflow/api";
-import { processVideoWorkflow } from "@/workflows/process-video";
+import { processVideo, processVideoWorkflow } from "@/workflows/process-video";
 
 export type VideoProcessingStartStatus = "started" | "already-processing";
 
@@ -106,6 +107,13 @@ export async function startVideoProcessingWorkflow({
 	mode?: "singlepart" | "multipart";
 	forceRestart?: boolean;
 }): Promise<VideoProcessingStartStatus> {
+	const workflowPayload = {
+		videoId,
+		userId,
+		rawFileKey,
+		bucketId: bucketId as S3Bucket.S3BucketId | null,
+	};
+
 	const status = await transitionVideoToProcessing({
 		videoId,
 		rawFileKey,
@@ -118,15 +126,13 @@ export async function startVideoProcessingWorkflow({
 		return status;
 	}
 
+	if (serverEnv().CAP_SELF_HOST_DIRECT_VIDEO_PROCESSING) {
+		startDirectVideoProcessing(videoId, workflowPayload, startFailureMessage);
+		return "started";
+	}
+
 	try {
-		await start(processVideoWorkflow, [
-			{
-				videoId,
-				userId,
-				rawFileKey,
-				bucketId: bucketId as S3Bucket.S3BucketId | null,
-			},
-		]);
+		await start(processVideoWorkflow, [workflowPayload]);
 		return "started";
 	} catch (error) {
 		const normalizedError =
@@ -140,4 +146,23 @@ export async function startVideoProcessingWorkflow({
 		);
 		throw normalizedError;
 	}
+}
+
+function startDirectVideoProcessing(
+	videoId: Video.VideoId,
+	payload: Parameters<typeof processVideoWorkflow>[0],
+	startFailureMessage: string,
+): void {
+	queueMicrotask(() => {
+		processVideo(payload).catch((error) => {
+			setVideoProcessingError(videoId, startFailureMessage, error).catch(
+				(setError) => {
+					console.error(
+						"[video-processing] Failed to record direct processing error",
+						setError,
+					);
+				},
+			);
+		});
+	});
 }

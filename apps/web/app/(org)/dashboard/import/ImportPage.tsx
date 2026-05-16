@@ -3,10 +3,14 @@
 import { faUpload } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import Link from "next/link";
+import { DashboardVideoDropUpload } from "./DashboardVideoDropUpload";
 
 export const ImportPage = () => {
 	return (
-		<div className="flex flex-col w-full h-full">
+		<DashboardVideoDropUpload
+			redirectToCaps
+			className="flex flex-col w-full h-full"
+		>
 			<div className="mb-8">
 				<h1 className="text-2xl font-medium text-gray-12">Import</h1>
 				<p className="mt-1 text-sm text-gray-10">
@@ -64,6 +68,6 @@ export const ImportPage = () => {
 					</div>
 				</Link>
 			</div>
-		</div>
+		</DashboardVideoDropUpload>
 	);
 };

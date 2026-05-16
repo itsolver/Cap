@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const updateWhereMock = vi.fn();
 const selectWhereMock = vi.fn();
 const startMock = vi.fn();
+const serverEnvMock = vi.fn(() => ({
+	CAP_SELF_HOST_DIRECT_VIDEO_PROCESSING: false,
+}));
 
 const dbMock = vi.fn(() => ({
 	update: vi.fn(() => ({
@@ -21,6 +24,10 @@ vi.mock("@cap/database", () => ({
 	db: dbMock,
 }));
 
+vi.mock("@cap/env", () => ({
+	serverEnv: serverEnvMock,
+}));
+
 vi.mock("server-only", () => ({}));
 
 vi.mock("workflow/api", () => ({
@@ -28,6 +35,7 @@ vi.mock("workflow/api", () => ({
 }));
 
 vi.mock("@/workflows/process-video", () => ({
+	processVideo: vi.fn(),
 	processVideoWorkflow: Symbol("processVideoWorkflow"),
 }));
 
