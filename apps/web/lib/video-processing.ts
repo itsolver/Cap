@@ -6,7 +6,10 @@ import { and, eq, ne } from "drizzle-orm";
 import { start } from "workflow/api";
 import { processVideo, processVideoWorkflow } from "@/workflows/process-video";
 
-export type VideoProcessingStartStatus = "started" | "already-processing";
+export type VideoProcessingStartStatus =
+	| "started"
+	| "already-processing"
+	| "already-complete";
 
 const getAffectedRows = (result: unknown) => {
 	if (Array.isArray(result)) {
@@ -65,6 +68,12 @@ export async function transitionVideoToProcessing({
 				: and(
 						eq(videoUploads.videoId, videoId),
 						ne(videoUploads.phase, "processing"),
+						// "complete" is terminal for implicit starts: a multipart
+						// completion retried after an uncertain network outcome can
+						// land after the first processing run already finished, and
+						// must not kick off a duplicate full re-process. Explicit
+						// re-processing goes through forceRestart.
+						ne(videoUploads.phase, "complete"),
 					),
 		);
 
@@ -83,6 +92,10 @@ export async function transitionVideoToProcessing({
 
 	if (upload.phase === "processing") {
 		return "already-processing";
+	}
+
+	if (upload.phase === "complete") {
+		return "already-complete";
 	}
 
 	throw new Error("Failed to transition upload to processing");
@@ -122,7 +135,7 @@ export async function startVideoProcessingWorkflow({
 		forceRestart,
 	});
 
-	if (status === "already-processing") {
+	if (status !== "started") {
 		return status;
 	}
 

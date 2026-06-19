@@ -2,9 +2,14 @@ import { db } from "@cap/database";
 import { getCurrentUser } from "@cap/database/auth/session";
 import { users, videos } from "@cap/database/schema";
 import type { VideoMetadata } from "@cap/database/types";
+import { serverEnv } from "@cap/env";
 import type { Video } from "@cap/web-domain";
 import { eq } from "drizzle-orm";
 import type { NextRequest } from "next/server";
+import {
+	canRetryAiGenerationForMode,
+	hasAiResultForMode,
+} from "@/lib/ai-metadata";
 import { startAiGeneration } from "@/lib/generate-ai";
 import { isAiGenerationEnabled } from "@/utils/flags";
 
@@ -40,8 +45,12 @@ export async function GET(request: NextRequest) {
 
 		const video = result[0];
 		const metadata: VideoMetadata = (video.metadata as VideoMetadata) || {};
+		const hasAiResult = hasAiResultForMode(
+			metadata,
+			serverEnv().CAP_AI_TITLE_ONLY,
+		);
 
-		if (metadata.aiTitle || metadata.summary || metadata.chapters) {
+		if (hasAiResult) {
 			console.log(
 				`[AI API] Returning existing AI metadata for video ${videoId}`,
 			);
@@ -74,9 +83,10 @@ export async function GET(request: NextRequest) {
 			);
 		}
 
-		const canRetry =
-			metadata.aiGenerationStatus === "ERROR" ||
-			metadata.aiGenerationStatus === "SKIPPED";
+		const canRetry = canRetryAiGenerationForMode(
+			metadata,
+			serverEnv().CAP_AI_TITLE_ONLY,
+		);
 
 		if (!canRetry) {
 			return Response.json(

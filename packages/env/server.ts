@@ -79,6 +79,10 @@ function createServerEnv() {
 			CAP_SELF_HOST_DIRECT_VIDEO_PROCESSING: boolString(false).describe(
 				"Run video processing directly instead of queueing a workflow",
 			),
+			CAP_CHROME_EXTENSION_ID: z
+				.string()
+				.optional()
+				.describe("Chrome Web Store extension id allowed to receive auth keys"),
 			CAP_ALLOWED_SIGNUP_DOMAINS: z
 				.string()
 				.optional()

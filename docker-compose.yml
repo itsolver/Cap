@@ -37,9 +37,9 @@ services:
       CAP_WHISPER_ASR_URL: ${CAP_WHISPER_ASR_URL:-http://whisper:9000}
       DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
       CAP_AI_PROVIDER: ${CAP_AI_PROVIDER:-ollama}
-      CAP_AI_TITLE_ONLY: ${CAP_AI_TITLE_ONLY:-true}
+      CAP_AI_TITLE_ONLY: ${CAP_AI_TITLE_ONLY:-false}
       CAP_OLLAMA_URL: ${CAP_OLLAMA_URL:-http://ollama:11434}
-      CAP_OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:1.5b}
+      CAP_OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
       CAP_ALLOWED_SIGNUP_DOMAINS: ${CAP_ALLOWED_SIGNUP_DOMAINS:-itsolver.net}
       CAP_VIDEOS_DEFAULT_PUBLIC: ${CAP_VIDEOS_DEFAULT_PUBLIC:-true}
       CAP_SELF_HOST_DIRECT_VIDEO_PROCESSING: ${CAP_SELF_HOST_DIRECT_VIDEO_PROCESSING:-true}
@@ -79,10 +79,11 @@ services:
     container_name: cap-whisper
     image: onerahmet/openai-whisper-asr-webservice:latest
     restart: unless-stopped
+    gpus: all
     environment:
       ASR_ENGINE: ${WHISPER_ENGINE:-faster_whisper}
-      ASR_MODEL: ${WHISPER_MODEL:-base}
-      ASR_DEVICE: ${WHISPER_DEVICE:-cpu}
+      ASR_MODEL: ${WHISPER_MODEL:-small}
+      ASR_DEVICE: ${WHISPER_DEVICE:-cuda}
     volumes:
       - cap-whisper-cache:/root/.cache
     networks:
@@ -92,6 +93,7 @@ services:
     container_name: cap-ollama
     image: ollama/ollama:latest
     restart: unless-stopped
+    gpus: all
     volumes:
       - cap-ollama-data:/root/.ollama
     networks:
@@ -106,11 +108,11 @@ services:
     entrypoint: >
       /bin/sh -c "
       until ollama list >/dev/null 2>&1; do sleep 2; done;
-      ollama pull $${OLLAMA_MODEL:-qwen2.5:1.5b};
+      ollama pull $${OLLAMA_MODEL:-qwen2.5:7b};
       "
     environment:
       OLLAMA_HOST: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:1.5b}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
     networks:
       - cap-network
 

@@ -3,11 +3,17 @@
 import { db } from "@cap/database";
 import { users, videos, videoUploads } from "@cap/database/schema";
 import type { VideoMetadata } from "@cap/database/types";
+import { serverEnv } from "@cap/env";
 import { provideOptionalAuth, VideosPolicy } from "@cap/web-backend";
 import { Policy, type Video } from "@cap/web-domain";
 import { eq } from "drizzle-orm";
 import { Effect, Exit } from "effect";
+import { canStartAiGenerationForMode } from "@/lib/ai-metadata";
 import { getAiProvider } from "@/lib/ai-provider";
+import {
+	isRetryableDesktopSegmentsFinalizationError,
+	queueDesktopSegmentsFinalization,
+} from "@/lib/desktop-segments-finalization";
 import { startAiGeneration } from "@/lib/generate-ai";
 import * as EffectRuntime from "@/lib/server";
 import { transcribeVideo } from "../../lib/transcribe";
@@ -31,6 +37,7 @@ type AiGenerationStatus =
 export interface VideoStatusResult {
 	transcriptionStatus: TranscriptionStatus | null;
 	aiGenerationStatus: AiGenerationStatus | null;
+	name: string | null;
 	aiTitle: string | null;
 	summary: string | null;
 	chapters: { title: string; start: number }[] | null;
@@ -59,16 +66,38 @@ export async function getVideoStatus(
 
 	if (!video.transcriptionStatus && getTranscriptionProvider()) {
 		const activeUpload = await db()
-			.select({ videoId: videoUploads.videoId })
+			.select({
+				videoId: videoUploads.videoId,
+				phase: videoUploads.phase,
+				processingError: videoUploads.processingError,
+			})
 			.from(videoUploads)
 			.where(eq(videoUploads.videoId, videoId))
 			.limit(1);
 
 		if (activeUpload.length > 0) {
+			const upload = activeUpload[0];
+			if (
+				video.source?.type === "desktopSegments" &&
+				upload?.phase === "error" &&
+				isRetryableDesktopSegmentsFinalizationError(upload.processingError)
+			) {
+				queueDesktopSegmentsFinalization({
+					videoId,
+					userId: video.ownerId,
+				}).catch((error) => {
+					console.error(
+						`[Get Status] Error queueing segment finalization for video ${videoId}:`,
+						error,
+					);
+				});
+			}
+
 			return {
 				transcriptionStatus: null,
 				aiGenerationStatus:
 					(metadata.aiGenerationStatus as AiGenerationStatus) || null,
+				name: video.name,
 				aiTitle: metadata.aiTitle || null,
 				summary: metadata.summary || null,
 				chapters: metadata.chapters || null,
@@ -90,6 +119,7 @@ export async function getVideoStatus(
 				transcriptionStatus: "PROCESSING",
 				aiGenerationStatus:
 					(metadata.aiGenerationStatus as AiGenerationStatus) || null,
+				name: video.name,
 				aiTitle: metadata.aiTitle || null,
 				summary: metadata.summary || null,
 				chapters: metadata.chapters || null,
@@ -103,6 +133,7 @@ export async function getVideoStatus(
 				transcriptionStatus: "ERROR",
 				aiGenerationStatus:
 					(metadata.aiGenerationStatus as AiGenerationStatus) || null,
+				name: video.name,
 				aiTitle: metadata.aiTitle || null,
 				summary: metadata.summary || null,
 				chapters: metadata.chapters || null,
@@ -116,6 +147,7 @@ export async function getVideoStatus(
 			transcriptionStatus: "ERROR",
 			aiGenerationStatus:
 				(metadata.aiGenerationStatus as AiGenerationStatus) || null,
+			name: video.name,
 			aiTitle: metadata.aiTitle || null,
 			summary: metadata.summary || null,
 			chapters: metadata.chapters || null,
@@ -125,9 +157,7 @@ export async function getVideoStatus(
 
 	const shouldTriggerAiGeneration =
 		video.transcriptionStatus === "COMPLETE" &&
-		!metadata.aiGenerationStatus &&
-		!metadata.aiTitle &&
-		!metadata.summary &&
+		canStartAiGenerationForMode(metadata, serverEnv().CAP_AI_TITLE_ONLY) &&
 		getAiProvider();
 
 	if (shouldTriggerAiGeneration) {
@@ -158,6 +188,7 @@ export async function getVideoStatus(
 					transcriptionStatus:
 						(video.transcriptionStatus as TranscriptionStatus) || null,
 					aiGenerationStatus: "QUEUED" as AiGenerationStatus,
+					name: video.name,
 					aiTitle: metadata.aiTitle || null,
 					summary: metadata.summary || null,
 					chapters: metadata.chapters || null,
@@ -176,6 +207,7 @@ export async function getVideoStatus(
 			(video.transcriptionStatus as TranscriptionStatus) || null,
 		aiGenerationStatus:
 			(metadata.aiGenerationStatus as AiGenerationStatus) || null,
+		name: video.name,
 		aiTitle: metadata.aiTitle || null,
 		summary: metadata.summary || null,
 		chapters: metadata.chapters || null,

@@ -2,9 +2,11 @@ import { db } from "@cap/database";
 import { getCurrentUser } from "@cap/database/auth/session";
 import { users, videos } from "@cap/database/schema";
 import type { VideoMetadata } from "@cap/database/types";
+import { serverEnv } from "@cap/env";
 import type { Video } from "@cap/web-domain";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { canRetryAiGenerationForMode } from "@/lib/ai-metadata";
 import { startAiGeneration } from "@/lib/generate-ai";
 import { isAiGenerationEnabled } from "@/utils/flags";
 
@@ -49,11 +51,10 @@ export async function POST(
 		}
 
 		const metadata = (video.metadata as VideoMetadata) || {};
-
-		const canRetry =
-			!metadata.aiGenerationStatus ||
-			metadata.aiGenerationStatus === "ERROR" ||
-			metadata.aiGenerationStatus === "SKIPPED";
+		const canRetry = canRetryAiGenerationForMode(
+			metadata,
+			serverEnv().CAP_AI_TITLE_ONLY,
+		);
 
 		if (!canRetry) {
 			return Response.json(

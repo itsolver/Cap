@@ -5,6 +5,7 @@ import { serverEnv } from "@cap/env";
 import type { Video } from "@cap/web-domain";
 import { eq } from "drizzle-orm";
 import { start } from "workflow/api";
+import { hasAiResultForMode } from "@/lib/ai-metadata";
 import { getAiProvider } from "@/lib/ai-provider";
 import {
 	generateAiWorkflow,
@@ -66,7 +67,7 @@ export async function startAiGeneration(
 
 	if (
 		metadata.aiGenerationStatus === "COMPLETE" &&
-		(metadata.aiTitle || (metadata.summary && metadata.chapters))
+		hasAiResultForMode(metadata, serverEnv().CAP_AI_TITLE_ONLY)
 	) {
 		return {
 			success: true,
