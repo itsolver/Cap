@@ -167,6 +167,7 @@ function createServerEnv() {
 					"Set to media-server to run instant-mode live transcription on the media server instead of a workflow (falls back to the workflow)",
 				),
 			ANTHROPIC_API_KEY: z.string().optional().describe("AI chat"),
+			CLAUDE_CODE_OAUTH_TOKEN: z.string().optional(),
 			OPENAI_API_KEY: z.string().optional().describe("AI summaries"),
 			GROQ_API_KEY: z.string().optional().describe("AI summaries"),
 			AI_PROVIDER: z

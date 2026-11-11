@@ -33,6 +33,7 @@ import {
 	getDesktopRecordingOutputKey,
 } from "@/lib/desktop-recording-source";
 import type { RecordingVerification } from "@/lib/desktop-recording-verification";
+import { applyFrameTitle } from "@/lib/frame-title";
 import { invalidateGoogleDriveStorageQuotaCache } from "@/lib/google-drive-storage-quota-cache";
 import {
 	MediaProcessingBudgetError,
@@ -935,6 +936,7 @@ async function queueFinalizedRecordingTranscription(
 ): Promise<boolean> {
 	"use step";
 
+	await applyFrameTitle(videoId);
 	if (!isTranscriptionConfigured()) return true;
 	try {
 		const [[owner], [video]] = await Promise.all([

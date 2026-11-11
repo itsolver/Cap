@@ -6,6 +6,7 @@ import { Video } from "@cap/web-domain";
 import { eq } from "drizzle-orm";
 import { FatalError, sleep } from "workflow";
 import { isAiGenerationEnabledForUser } from "@/lib/ai-generation-entitlement";
+import { applyFrameTitle } from "@/lib/frame-title";
 import { getMediaProcessingRejection } from "@/lib/media-processing-policy";
 import {
 	createMediaServerCapacityError,
@@ -420,6 +421,7 @@ async function queueProcessedVideoTranscription(
 ): Promise<void> {
 	"use step";
 
+	await applyFrameTitle(videoId);
 	if (!isTranscriptionConfigured()) return;
 	try {
 		const [owner] = await db()

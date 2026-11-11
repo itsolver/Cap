@@ -23,6 +23,7 @@ WORKDIR /app
 
 RUN addgroup -g 1001 -S nodejs
 RUN adduser -S nextjs -u 1001
+RUN apk add --no-cache libgcc libstdc++ ripgrep && npm install -g @anthropic-ai/claude-code
 
 
 # Automatically leverage output traces to reduce image size
