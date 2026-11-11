@@ -27,7 +27,13 @@ async function fetchFrame(videoUrl: string, timestamp: number) {
 			"Content-Type": "application/json",
 			"x-media-server-secret": env.MEDIA_SERVER_WEBHOOK_SECRET as string,
 		},
-		body: JSON.stringify({ videoUrl, timestamp, width: 1280, quality: 70 }),
+		body: JSON.stringify({
+			videoUrl,
+			timestamp,
+			width: 1280,
+			height: 720,
+			quality: 70,
+		}),
 	});
 	if (!response.ok) {
 		throw new Error(`Frame at ${timestamp}s failed: ${response.status}`);
