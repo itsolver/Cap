@@ -22,6 +22,7 @@ import { useEffectMutation, useRpcClient } from "@/lib/EffectRuntime";
 import { parsePageParam } from "@/lib/page-param";
 import { useVideosAnalyticsQuery } from "@/lib/Queries/Analytics";
 import { useDashboardContext } from "../Contexts";
+import { DashboardVideoDropUpload } from "../import/DashboardVideoDropUpload";
 import {
 	NewFolderDialog,
 	SelectedCapsBar,
@@ -255,10 +256,16 @@ export const Caps = ({
 		[data, isUploading, uploadingCapId],
 	);
 
-	if (count === 0 && folders.length === 0) return <EmptyCapState />;
+	if (count === 0 && folders.length === 0) {
+		return (
+			<DashboardVideoDropUpload className="flex relative flex-col w-full h-full">
+				<EmptyCapState />
+			</DashboardVideoDropUpload>
+		);
+	}
 
 	return (
-		<div className="flex relative flex-col w-full h-full">
+		<DashboardVideoDropUpload className="flex relative flex-col w-full h-full">
 			<NewFolderDialog
 				open={openNewFolderDialog}
 				onOpenChange={setOpenNewFolderDialog}
@@ -356,6 +363,6 @@ export const Caps = ({
 					</div>
 				</div>
 			)}
-		</div>
+		</DashboardVideoDropUpload>
 	);
 };

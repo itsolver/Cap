@@ -135,6 +135,18 @@ function createServerEnv() {
 				),
 
 			/// AI providers
+			CAP_TRANSCRIPTION_PROVIDER: z
+				.union([z.literal("assemblyai"), z.literal("local-whisper")])
+				.optional()
+				.describe(
+					"Transcription provider. When unset, AssemblyAI is used if ASSEMBLY_API_KEY is set, otherwise local Whisper if CAP_WHISPER_ASR_URL is set.",
+				),
+			CAP_WHISPER_ASR_URL: z
+				.string()
+				.optional()
+				.describe(
+					"URL of a whisper-asr-webservice instance for local transcription (eg. http://whisper:9000)",
+				),
 			ASSEMBLY_API_KEY: z.string().optional().describe("Audio transcription"),
 			ASSEMBLY_BASE_URL: z
 				.string()

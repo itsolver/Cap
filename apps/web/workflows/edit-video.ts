@@ -33,6 +33,7 @@ import {
 import { decryptEditTranscriptObject } from "@/lib/edit-transcript-storage";
 import { startAiGeneration } from "@/lib/generate-ai";
 import { transcribeVideo } from "@/lib/transcribe";
+import { isTranscriptionConfigured } from "@/lib/transcription-provider";
 import {
 	clearFailedEdit,
 	type EditOperation,
@@ -579,7 +580,7 @@ async function queueTranscriptionRegeneration(
 ): Promise<void> {
 	"use step";
 
-	if (!serverEnv().ASSEMBLY_API_KEY) return;
+	if (!isTranscriptionConfigured()) return;
 	try {
 		const result = await transcribeVideo(
 			videoId as Video.VideoId,

@@ -10,7 +10,6 @@ import {
 	videoUploads,
 } from "@cap/database/schema";
 import type { VideoEditSpec, VideoMetadata } from "@cap/database/types";
-import { serverEnv } from "@cap/env";
 import { Storage } from "@cap/web-backend/src/Storage/index";
 import {
 	type AiGenerationLanguage,
@@ -41,6 +40,7 @@ import {
 import { encryptEditTranscriptObject } from "@/lib/edit-transcript-storage";
 import { startAiGeneration } from "@/lib/generate-ai";
 import { getLiveTranscriptObjectKey } from "@/lib/live-transcribe-core";
+import { transcribeWithLocalWhisper } from "@/lib/local-whisper";
 import {
 	checkHasAudioTrackViaMediaServer,
 	extractAudioViaMediaServer,
@@ -50,6 +50,10 @@ import {
 import { planSegmentsAudioExtraction } from "@/lib/segments-audio";
 import { downloadConcatenatedSegments } from "@/lib/segments-audio-download";
 import { fetchStorageUrl } from "@/lib/storage-fetch";
+import {
+	getTranscriptionProvider,
+	isTranscriptionConfigured,
+} from "@/lib/transcription-provider";
 import { decodeStorageVideo } from "@/lib/video-storage";
 import { runWorkflowPromise } from "@/lib/workflow-runtime";
 
@@ -156,7 +160,7 @@ export async function transcribeVideoWorkflow(
 			};
 		}
 
-		const transcription = await transcribeWithAssemblyAI(
+		const transcription = await transcribeAudio(
 			audioUrl,
 			videoData.aiGenerationLanguage,
 			videoDurationMs,
@@ -218,7 +222,7 @@ export async function backfillEditTranscriptWorkflow(
 			return { success: false };
 		}
 
-		const editTranscript = await transcribeEditTranscriptWithAssemblyAI(
+		const editTranscript = await transcribeEditTranscript(
 			audioUrl,
 			videoEdit ? videoEdit.editSpec.sourceDuration : (video.duration ?? 0),
 		);
@@ -258,8 +262,8 @@ export async function backfillEditTranscriptWorkflow(
 async function validateVideo(videoId: string): Promise<VideoData> {
 	"use step";
 
-	if (!serverEnv().ASSEMBLY_API_KEY) {
-		throw new FatalError("Missing ASSEMBLY_API_KEY");
+	if (!isTranscriptionConfigured()) {
+		throw new FatalError("No transcription provider configured");
 	}
 
 	const query = await db()
@@ -333,8 +337,8 @@ async function validateEditTranscriptBackfill(
 ) {
 	"use step";
 
-	if (!serverEnv().ASSEMBLY_API_KEY) {
-		throw new FatalError("Missing ASSEMBLY_API_KEY");
+	if (!isTranscriptionConfigured()) {
+		throw new FatalError("No transcription provider configured");
 	}
 
 	const [video] = await db()
@@ -770,7 +774,7 @@ async function extractAudioFromSegmentsImpl(
 	}
 }
 
-async function transcribeWithAssemblyAI(
+async function transcribeAudio(
 	audioUrl: string,
 	language: AiGenerationLanguage,
 	videoDurationMs: number,
@@ -785,6 +789,19 @@ async function transcribeWithAssemblyAI(
 	}
 
 	const audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
+
+	if (getTranscriptionProvider() === "local-whisper") {
+		const transcript = await transcribeLocally(audioBuffer, language);
+		const editTranscript = createEditTranscript(
+			transcript,
+			videoDurationMs > 0 ? videoDurationMs : transcript.durationMs,
+		);
+		return {
+			vtt: editTranscriptWordsToCaptionVtt(editTranscript.words),
+			editTranscript: serializeEditTranscript(editTranscript),
+		};
+	}
+
 	const client = createAssemblyAIClient();
 
 	const transcript = await client.transcripts.transcribe({
@@ -822,7 +839,7 @@ async function transcribeWithAssemblyAI(
 	};
 }
 
-async function transcribeEditTranscriptWithAssemblyAI(
+async function transcribeEditTranscript(
 	audioUrl: string,
 	videoDurationSeconds: number,
 ): Promise<string> {
@@ -836,6 +853,19 @@ async function transcribeEditTranscriptWithAssemblyAI(
 	}
 
 	const audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
+
+	if (getTranscriptionProvider() === "local-whisper") {
+		const transcript = await transcribeLocally(audioBuffer, "auto");
+		return serializeEditTranscript(
+			createEditTranscript(
+				transcript,
+				videoDurationSeconds > 0
+					? videoDurationSeconds * 1000
+					: transcript.durationMs,
+			),
+		);
+	}
+
 	const client = createAssemblyAIClient();
 	const transcript = await client.transcripts.transcribe({
 		audio: audioBuffer,
@@ -858,6 +888,23 @@ async function transcribeEditTranscriptWithAssemblyAI(
 			? videoDurationSeconds * 1000
 			: (transcript.audio_duration ?? 0) * 1000;
 	return serializeEditTranscript(createEditTranscript(transcript, durationMs));
+}
+
+async function transcribeLocally(
+	audioBuffer: Buffer,
+	language: AiGenerationLanguage,
+) {
+	const transcript = await transcribeWithLocalWhisper(audioBuffer, language);
+
+	console.log(
+		`[transcribe] Local Whisper transcript finished with ${transcript.words.length} words, language=${transcript.language_code ?? "unknown"}`,
+	);
+
+	if (transcript.words.length === 0) {
+		throw new FatalError("Local Whisper found no spoken audio");
+	}
+
+	return transcript;
 }
 
 async function saveTranscription(
