@@ -11,7 +11,7 @@ import { runWorkflowPromise } from "@/lib/workflow-runtime";
 import { shouldReplaceVideoTitle } from "@/workflows/generate-ai";
 
 const FRAME_POSITIONS = [0.1, 0.35, 0.6, 0.85];
-const TITLE_MODEL = "claude-haiku-4-5";
+const TITLE_MODEL = "haiku";
 const CLAUDE_TIMEOUT_MS = 120_000;
 
 const PROMPT = `These are frames from a screen recording made by an IT support technician.
